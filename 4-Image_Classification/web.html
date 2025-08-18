@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Testare Semne de Circulație</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.10.0/tf.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.2em;
+        }
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .upload-area:hover {
+            border-color: #764ba2;
+            background-color: #f8f9ff;
+        }
+        .upload-area.dragover {
+            border-color: #764ba2;
+            background-color: #f0f4ff;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .upload-btn {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: transform 0.2s;
+        }
+        .upload-btn:hover {
+            transform: translateY(-2px);
+        }
+        .model-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+        }
+        .model-input {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .load-model-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .preview-container {
+            display: flex;
+            gap: 30px;
+            margin-top: 20px;
+        }
+        .image-preview {
+            flex: 1;
+        }
+        .results {
+            flex: 1;
+        }
+        #imagePreview {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        .prediction {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .confidence-bar {
+            background: #e0e0e0;
+            height: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.3s ease;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .status.loading {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚦 Testare Model Semne de Circulație</h1>
+        
+        <div class="model-section">
+            <h3>Încărcare Model</h3>
+            <input type="text" id="modelPath" class="model-input" 
+                   placeholder="Calea către modelul tău (ex: ./model.json sau URL)">
+            <br>
+            <input type="text" id="classLabels" class="model-input" 
+                   placeholder="Clasele separate prin virgulă (ex: stop,viteza,prioritate)">
+            <button onclick="loadModel()" class="load-model-btn">Încarcă Model</button>
+            <div id="modelStatus" class="status hidden"></div>
+        </div>
+
+        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+            <p>📷 Faceți click aici sau trageți o imagine cu un semn de circulație</p>
+            <button class="upload-btn">Selectează Imagine</button>
+            <input type="file" id="fileInput" accept="image/*" onchange="handleImage(event)">
+        </div>
+
+        <div id="previewContainer" class="preview-container hidden">
+            <div class="image-preview">
+                <h3>Imaginea încărcată:</h3>
+                <img id="imagePreview" alt="Preview">
+            </div>
+            <div class="results">
+                <h3>Rezultate predicție:</h3>
+                <div id="predictions"></div>
+                <button onclick="classifyImage()" class="upload-btn" style="margin-top: 15px;">
+                    🔍 Clasifică Imaginea
+                </button>
+            </div>
+        </div>
+
+        <div id="status" class="status hidden"></div>
+    </div>
+
+    <script>
+        let model = null;
+        let classNames = [];
+        let currentImage = null;
+
+        // Drag and drop functionality
+        const uploadArea = document.querySelector('.upload-area');
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleImageFile(files[0]);
+            }
+        });
+
+        async function loadModel() {
+            const modelPath = document.getElementById('modelPath').value.trim();
+            const classLabelsInput = document.getElementById('classLabels').value.trim();
+            const statusDiv = document.getElementById('modelStatus');
+
+            if (!modelPath || !classLabelsInput) {
+                showStatus('modelStatus', 'Te rog completează calea către model și clasele!', 'error');
+                return;
+            }
+
+            try {
+                showStatus('modelStatus', 'Se încarcă modelul...', 'loading');
+                
+                // Parse class names
+                classNames = classLabelsInput.split(',').map(name => name.trim());
+                
+                // Load model
+                model = await tf.loadLayersModel(modelPath);
+                
+                showStatus('modelStatus', `Model încărcat cu succes! Clase detectate: ${classNames.length}`, 'success');
+                
+            } catch (error) {
+                console.error('Eroare la încărcarea modelului:', error);
+                showStatus('modelStatus', `Eroare la încărcarea modelului: ${error.message}`, 'error');
+            }
+        }
+
+        function handleImage(event) {
+            const file = event.target.files[0];
+            if (file) {
+                handleImageFile(file);
+            }
+        }
+
+        function handleImageFile(file) {
+            if (!file.type.startsWith('image/')) {
+                showStatus('status', 'Te rog selectează un fișier imagine valid!', 'error');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = document.getElementById('imagePreview');
+                img.src = e.target.result;
+                currentImage = img;
+                
+                document.getElementById('previewContainer').classList.remove('hidden');
+                document.getElementById('predictions').innerHTML = '';
+                hideStatus('status');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function classifyImage() {
+            if (!model) {
+                showStatus('status', 'Te rog încarcă mai întâi un model!', 'error');
+                return;
+            }
+
+            if (!currentImage) {
+                showStatus('status', 'Te rog selectează o imagine!', 'error');
+                return;
+            }
+
+            try {
+                showStatus('status', 'Se clasifică imaginea...', 'loading');
+
+                // Preprocess image
+                const tensor = tf.browser.fromPixels(currentImage)
+                    .resizeNearestNeighbor([224, 224]) // Ajustează dimensiunea conform modelului tău
+                    .toFloat()
+                    .div(255.0)
+                    .expandDims();
+
+                // Make prediction
+                const prediction = await model.predict(tensor).data();
+                
+                // Process results
+                const results = Array.from(prediction)
+                    .map((confidence, index) => ({
+                        className: classNames[index] || `Clasa ${index}`,
+                        confidence: confidence
+                    }))
+                    .sort((a, b) => b.confidence - a.confidence);
+
+                displayResults(results);
+                hideStatus('status');
+                
+                // Cleanup tensor
+                tensor.dispose();
+
+            } catch (error) {
+                console.error('Eroare la clasificare:', error);
+                showStatus('status', `Eroare la clasificare: ${error.message}`, 'error');
+            }
+        }
+
+        function displayResults(results) {
+            const predictionsDiv = document.getElementById('predictions');
+            predictionsDiv.innerHTML = '';
+
+            results.forEach((result, index) => {
+                const confidence = (result.confidence * 100).toFixed(2);
+                const predictionDiv = document.createElement('div');
+                predictionDiv.className = 'prediction';
+                
+                predictionDiv.innerHTML = `
+                    <strong>${result.className}</strong>
+                    <div style="margin-top: 5px;">
+                        <span>Încredere: ${confidence}%</span>
+                        <div class="confidence-bar">
+                            <div class="confidence-fill" style="width: ${confidence}%"></div>
+                        </div>
+                    </div>
+                `;
+                
+                predictionsDiv.appendChild(predictionDiv);
+            });
+        }
+
+        function showStatus(elementId, message, type) {
+            const statusDiv = document.getElementById(elementId);
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+            statusDiv.classList.remove('hidden');
+        }
+
+        function hideStatus(elementId) {
+            document.getElementById(elementId).classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
